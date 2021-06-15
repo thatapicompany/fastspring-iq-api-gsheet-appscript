@@ -1,0 +1,284 @@
+//this is a function that fires when the webapp receives a GET request
+function doGet(e) {
+  return HtmlService.createHtmlOutput("request received");
+}
+
+//this is a function that fires when the webapp receives a POST request
+function doPost(e) {
+  var params = JSON.stringify(e.postData.contents);
+  params = JSON.parse(params);
+  var webhookBody = JSON.parse(e.postData.contents);
+  
+  var doc = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = doc.getSheetByName("received-webhooks");  
+
+  //var sheet = SpreadsheetApp.getActiveSheet();
+  var lastRow = Math.max(sheet.getLastRow(),1);
+  sheet.insertRowAfter(lastRow);
+  var timestamp = new Date();
+  sheet.getRange(lastRow + 1, 1).setValue(timestamp);
+  sheet.getRange(lastRow + 1, 2).setValue(webhookBody.before.id);
+  sheet.getRange(lastRow + 1, 3).setValue(webhookBody.before.status);
+  sheet.getRange(lastRow + 1, 4).setValue(webhookBody.after.status);
+  sheet.getRange(lastRow + 1, 5).setValue(params);
+  SpreadsheetApp.flush();
+  return HtmlService.createHtmlOutput("post request received");
+}
+// runs when the sheet first opens, and adds a new menu to the top bar
+function onOpen(e) {
+  // Add a custom menu to the spreadsheet.
+  SpreadsheetApp.getUi() // Or DocumentApp, SlidesApp, or FormApp.
+      .createMenu('FastSpring IQ')
+      .addItem('Refresh Data', 'refreshData')
+      .addItem('Check Webhook Setup', 'checkWebhookSetup')
+      .addToUi();
+}
+// makes a request to each API Endpoint to download all entities of each type
+function refreshData(){
+  
+  getJSON('published-quotes','published-quotes')
+  getJSON('contacts','contacts')
+  getJSON('companies','companies')
+  getJSON('webhooks','webhooks')
+  
+  // only if needed as they could be quite large
+  getJSON('quotes','quotes')
+  getJSON('activities','activities')
+}
+// check if the webhook has been setup, if not create one
+function checkWebhookSetup(){
+
+  var doc = SpreadsheetApp.getActiveSpreadsheet();
+  var configSheet = doc.getSheetByName("config");  
+  var webhookUrl = configSheet.getRange(4, 2).getValue();
+  if(!webhookUrl || webhookUrl.length<16)throw new Error( "Follow the instructions on how to create a Webhook Url and then enter in the cell on the Config tab" );
+  //get existing webhooks
+  var aUrl = `https://salesright-rest-api-usatclriuq-uc.a.run.app/webhooks`;
+  var response = UrlFetchApp.fetch(aUrl, getRequestOptions()); // get feed
+  var data = JSON.parse(response.getContentText()); //
+
+  var found = false;
+  //check for one matching the config.webhookUrl
+  for (i in data){
+    if(data[i].url == webhookUrl)found = true;
+  }
+
+  //if not found then create one
+  if(!found)
+  {
+    var newWebhookBody = {
+      url: webhookUrl,
+      method: "POST",
+      topic: "*/*"
+    }
+    console.log(newWebhookBody)
+    var createResponse = UrlFetchApp.fetch(aUrl, getRequestOptions("POST",newWebhookBody)); // get feed
+
+  getJSON('webhooks','webhooks')
+  }
+
+
+}
+
+function getRequestOptions(method="GET",body){
+
+  var doc = SpreadsheetApp.getActiveSpreadsheet();
+  var configSheet = doc.getSheetByName("config");  
+  var apiKey = configSheet.getRange(3, 2).getValue();
+  if(!apiKey || apiKey.length<36)throw new Error( "Add your API Key to the right cell on the Config tab. Shoul be 36 characters long" );
+  var options = {
+     "async": true,
+     "crossDomain": true,
+     "method" : method,
+     "headers" : {
+       "api_key" : apiKey,
+       //"cache-control": "no-cache",
+       "Content-Type": "application/json"
+     }
+   };
+  if(body)options.payload = JSON.stringify(body);
+  return options
+}
+
+function getJSON(endpoint,targetSheetName) {
+  
+  var sheetname = targetSheetName||"PublishedQuotes";
+  var aUrl = `https://salesright-rest-api-usatclriuq-uc.a.run.app/${endpoint}`;
+  var response = UrlFetchApp.fetch(aUrl, getRequestOptions()); // get feed
+  var dataAll = JSON.parse(response.getContentText()); //
+  var data = dataAll;//.value;//.items;
+
+  for (i in data){
+    data[i].createdAt = new Date(data[i].createdAt);
+    data[i].updatedAt = new Date(data[i].updatedAt);
+  }
+
+  var doc = SpreadsheetApp.getActiveSpreadsheet();
+  var temp = doc.getSheetByName("PublishedQuotes");  
+  if (!doc.getSheetByName(sheetname)){
+    var sheet = doc.insertSheet(sheetname, {template:temp});
+  } else {
+    var sheet = doc.getSheetByName(sheetname);
+    sheet.getRange(2, 1, sheet.getLastRow(), sheet.getMaxColumns()).clear({contentsOnly:true});
+  } 
+  insertData(sheet,data,targetSheetName);
+}
+
+function insertData(sheet, data,sheetName){
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (data.length>0){
+    ss.toast("Inserting "+data.length+" rows to "+sheetName);
+    sheet.insertRowsAfter(1, data.length);
+    setRowsData(sheet, data);
+    //console.log(data)
+  } else {
+    ss.toast("All done");
+  }  
+}
+
+
+
+// Back to the stuff from Google -->
+
+// setRowsData fills in one row of data per object defined in the objects Array.
+// For every Column, it checks if data objects define a value for it.
+// Arguments:
+//   - sheet: the Sheet Object where the data will be written
+//   - objects: an Array of Objects, each of which contains data for a row
+//   - optHeadersRange: a Range of cells where the column headers are defined. This
+//     defaults to the entire first row in sheet.
+//   - optFirstDataRowIndex: index of the first row where data should be written. This
+//     defaults to the row immediately below the headers.
+function setRowsData(sheet, objects, optHeadersRange, optFirstDataRowIndex) {
+  var headersRange = optHeadersRange || sheet.getRange(1, 1, 1, sheet.getMaxColumns());
+  var firstDataRowIndex = optFirstDataRowIndex || headersRange.getRowIndex() + 1;
+  var headers = headersRange.getValues()[0];//normalizeHeaders(headersRange.getValues()[0]);
+
+  var data = [];
+  for (var i = 0; i < objects.length; ++i) {
+    var values = []
+    for (j = 0; j < headers.length; ++j) {
+      var header = headers[j];
+      console.log(header, objects[i][header])
+      values.push(header.length > 0 && objects[i][header] ? objects[i][header] : "");
+    }
+    data.push(values);
+  }
+  var destinationRange = sheet.getRange(firstDataRowIndex, headersRange.getColumnIndex(), 
+                                        objects.length, headers.length);
+  destinationRange.setValues(data);
+}
+
+// getRowsData iterates row by row in the input range and returns an array of objects.
+// Each object contains all the data for a given row, indexed by its normalized column name.
+// Arguments:
+//   - sheet: the sheet object that contains the data to be processed
+//   - range: the exact range of cells where the data is stored
+//   - columnHeadersRowIndex: specifies the row number where the column names are stored.
+//       This argument is optional and it defaults to the row immediately above range;
+// Returns an Array of objects.
+function getRowsData(sheet, range, columnHeadersRowIndex) {
+  columnHeadersRowIndex = columnHeadersRowIndex || range.getRowIndex() - 1;
+  var numColumns = range.getEndColumn() - range.getColumn() + 1;
+  var headersRange = sheet.getRange(columnHeadersRowIndex, range.getColumn(), 1, numColumns);
+  var headers = headersRange.getValues()[0];
+  return getObjects(range.getValues(), headers);//normalizeHeaders(headers));
+}
+
+// For every row of data in data, generates an object that contains the data. Names of
+// object fields are defined in keys.
+// Arguments:
+//   - data: JavaScript 2d array
+//   - keys: Array of Strings that define the property names for the objects to create
+function getObjects(data, keys) {
+  var objects = [];
+  for (var i = 0; i < data.length; ++i) {
+    var object = {};
+    var hasData = false;
+    for (var j = 0; j < data[i].length; ++j) {
+      var cellData = data[i][j];
+      if (isCellEmpty(cellData)) {
+        continue;
+      }
+      object[keys[j]] = cellData;
+      hasData = true;
+    }
+    if (hasData) {
+      objects.push(object);
+    }
+  }
+  return objects;
+}
+
+// Returns an Array of normalized Strings.
+// Arguments:
+//   - headers: Array of Strings to normalize
+function normalizeHeaders(headers) {
+  var keys = [];
+  for (var i = 0; i < headers.length; ++i) {
+    var key = normalizeHeader(headers[i]);
+    if (key.length > 0) {
+      keys.push(key);
+    }
+  }
+  return keys;
+}
+
+// Normalizes a string, by removing all alphanumeric characters and using mixed case
+// to separate words. The output will always start with a lower case letter.
+// This function is designed to produce JavaScript object property names.
+// Arguments:
+//   - header: string to normalize
+// Examples:
+//   "First Name" -> "firstName"
+//   "Market Cap (millions) -> "marketCapMillions
+//   "1 number at the beginning is ignored" -> "numberAtTheBeginningIsIgnored"
+function normalizeHeader(header) {
+  var key = "";
+  var upperCase = false;
+  for (var i = 0; i < header.length; ++i) {
+    var letter = header[i];
+    if (letter == " " && key.length > 0) {
+      upperCase = true;
+      continue;
+    }
+    //if (!isAlnum(letter)) {
+    //  continue;
+    //}
+    if (key.length == 0 && isDigit(letter)) {
+      continue; // first character must be a letter
+    }
+    if (upperCase) {
+      upperCase = false;
+      key += letter.toUpperCase();
+    } else {
+      key += letter.toLowerCase();
+    }
+  }
+  return key;
+}
+
+// Returns true if the cell where cellData was read from is empty.
+// Arguments:
+//   - cellData: string
+function isCellEmpty(cellData) {
+  return typeof(cellData) == "string" && cellData == "";
+}
+
+// Returns true if the character char is alphabetical, false otherwise.
+function isAlnum(char) {
+  return char >= 'A' && char <= 'Z' ||
+    char >= 'a' && char <= 'z' ||
+    isDigit(char);
+}
+
+// Returns true if the character char is a digit, false otherwise.
+function isDigit(char) {
+  return char >= '0' && char <= '9';
+}
+// http://jsfromhell.com/array/chunk
+function chunk(a, s){
+    for(var x, i = 0, c = -1, l = a.length, n = []; i < l; i++)
+        (x = i % s) ? n[c][x] = a[i] : n[++c] = [a[i]];
+    return n;
+}
