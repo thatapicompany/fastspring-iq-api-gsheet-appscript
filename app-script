@@ -1,3 +1,13 @@
+
+// runs when the sheet first opens, and adds a new menu to the top bar
+function onOpen(e) {
+  // Add a custom menu to the spreadsheet.
+  SpreadsheetApp.getUi() // Or DocumentApp, SlidesApp, or FormApp.
+      .createMenu('FastSpring IQ')
+      .addItem('Refresh Data', 'refreshData')
+      .addItem('Check Webhook Setup', 'checkWebhookSetup')
+      .addToUi();
+}
 //this is a function that fires when the webapp receives a GET request
 function doGet(e) {
   return HtmlService.createHtmlOutput("request received");
@@ -23,15 +33,6 @@ function doPost(e) {
   sheet.getRange(lastRow + 1, 5).setValue(params);
   SpreadsheetApp.flush();
   return HtmlService.createHtmlOutput("post request received");
-}
-// runs when the sheet first opens, and adds a new menu to the top bar
-function onOpen(e) {
-  // Add a custom menu to the spreadsheet.
-  SpreadsheetApp.getUi() // Or DocumentApp, SlidesApp, or FormApp.
-      .createMenu('FastSpring IQ')
-      .addItem('Refresh Data', 'refreshData')
-      .addItem('Check Webhook Setup', 'checkWebhookSetup')
-      .addToUi();
 }
 // makes a request to each API Endpoint to download all entities of each type
 function refreshData(){
